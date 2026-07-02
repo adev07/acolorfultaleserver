@@ -135,6 +135,11 @@ const getAccessToken = async (): Promise<string | null> => {
   return settings?.accessToken ?? null;
 };
 
+const getInstagramPageId = async (): Promise<string | null> => {
+  const settings = await MetaSettings.findOne().select("instagramPageId").lean();
+  return settings?.instagramPageId ?? null;
+};
+
 /**
  * Get the verify token (used by webhook verification).
  * DB-only: configured via Meta Settings, so there is no env fallback.
@@ -237,6 +242,7 @@ export default {
   deleteSettings,
   testConnection,
   getAccessToken,
+  getInstagramPageId,
   getVerifyToken,
   refreshAccessToken,
 };
