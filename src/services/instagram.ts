@@ -72,31 +72,6 @@ const isDuplicateMessage = async (mid: string | undefined): Promise<boolean> => 
   }
 };
 
-const markMessageProcessed = async (mid: string | undefined): Promise<void> => {
-  if (!mid) return;
-  try {
-    await ProcessedMessage.create({ mid });
-  } catch (err: any) {
-    if (err?.code !== 11000) throw err;
-  }
-};
-
-const markOutboundResponseProcessed = async (
-  response: Response,
-  senderId: string
-): Promise<void> => {
-  if (!response.ok) return;
-  try {
-    const data = (await response.clone().json()) as { message_id?: string };
-    await markMessageProcessed(data.message_id);
-    if (data.message_id) {
-      log("outbound.mid-recorded", { senderId, mid: data.message_id });
-    }
-  } catch (err) {
-    logErr("outbound.mid-record-failed", err, { senderId });
-  }
-};
-
 // ─── Message coalescing (Mongo-backed buffer) ────────────────────────
 // We optimize for fast replies (Intercom/ManyChat-style) but still
 // gracefully handle burst typing.
@@ -328,7 +303,7 @@ const getOrCreateConversation = async (
 
 // ─── Core: process a single messaging event ─────────────────────────
 
-const processMessagingEvent = async (event: MessagingEvent, webhookPageId?: string) => {
+const processMessagingEvent = async (event: MessagingEvent) => {
   const senderId = event.sender?.id;
   const recipientId = event.recipient?.id;
   const isEcho = event.message?.is_echo === true;
@@ -360,44 +335,6 @@ const processMessagingEvent = async (event: MessagingEvent, webhookPageId?: stri
               : "empty-text",
     });
     return;
-  }
-
-  const configuredPageId = await metaSettingsService.getInstagramPageId();
-  const knownPageIds = [configuredPageId, webhookPageId].filter(
-    (id): id is string => Boolean(id)
-  );
-
-  if (knownPageIds.length > 0) {
-    if (knownPageIds.includes(senderId)) {
-      log("event.skipped", {
-        reason: "outbound-from-page",
-        senderId,
-        recipientId,
-        configuredPageId,
-        webhookPageId,
-        mid,
-      });
-      return;
-    }
-
-    if (!knownPageIds.includes(recipientId)) {
-      log("event.skipped", {
-        reason: "recipient-not-known-page",
-        senderId,
-        recipientId,
-        configuredPageId,
-        webhookPageId,
-        mid,
-      });
-      return;
-    }
-  } else {
-    log("event.direction-unverified", {
-      senderId,
-      recipientId,
-      mid,
-      note: "no page id available; relying on is_echo and mid dedupe",
-    });
   }
 
   if (await isDuplicateMessage(mid)) {
@@ -681,8 +618,7 @@ const processAIResponse = async (
       conversation.status = "COMPLETED";
 
       await conversation.save();
-      const res = await sendInstagramMessage(accessToken, senderId, acknowledgement);
-      await markOutboundResponseProcessed(res, senderId);
+      await sendInstagramMessage(accessToken, senderId, acknowledgement);
     } else {
       await conversation.save();
     }
@@ -837,7 +773,6 @@ const processAIResponse = async (
     for (let attempt = 1; attempt <= SEND_MAX_ATTEMPTS; attempt++) {
       try {
         const res = await sendInstagramMessage(accessToken, senderId, chunk);
-        await markOutboundResponseProcessed(res, senderId);
         log("ai.send.done", {
           senderId,
           ok: res.ok,
@@ -892,7 +827,7 @@ export const handleInstagramWebhook = async (payload: WebhookPayload) => {
   for (const entry of entries) {
     if (Array.isArray(entry.messaging) && entry.messaging.length) {
       await Promise.all(
-        entry.messaging.map((event) => processMessagingEvent(event, entry.id))
+        entry.messaging.map((event) => processMessagingEvent(event))
       );
     } else {
       log("webhook.entry-no-messaging", {
