@@ -66,6 +66,22 @@ export const CREATIVE_SUBTYPE_TAGS: Record<string, string> = {
 export const PROFESSIONAL_REPLY_LIMIT = 4;
 export const GENERAL_REPLY_LIMIT = 20;
 
+// ─── Loop / velocity guard ──────────────────────────────────────────
+// Circuit breaker against runaway conversations (two AIs ping-ponging,
+// spam floods). If we've already sent LOOP_GUARD_MAX_REPLIES assistant
+// messages within the last LOOP_GUARD_WINDOW_MS, we stop replying. Going
+// silent breaks the loop (the other bot has nothing to answer), and the
+// window naturally clears after we've been quiet — so a real user who
+// comes back later still gets answered. Identity-agnostic: catches any
+// looping partner, including a fresh account.
+// Set the ceiling ABOVE what a fast, engaged human does in the window — a
+// real back-and-forth plateaus, a bot-to-bot loop is infinite and crosses
+// any ceiling, so a high threshold still kills loops while sparing humans.
+// Tripping only pauses us; once our replies age out of the window, the next
+// message is answered normally — it's never a permanent block.
+export const LOOP_GUARD_WINDOW_MS = 5 * 60 * 1000;
+export const LOOP_GUARD_MAX_REPLIES = 15;
+
 export const FLOW_MESSAGES = {
   INVESTOR: [
     "Thank you for reaching out — we truly appreciate your interest in A Colorful Tale. May I ask what initially caught your attention about the project?",

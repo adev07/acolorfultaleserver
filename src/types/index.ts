@@ -28,7 +28,8 @@ export type ConversationTag =
   | "CREATIVE_PRODUCTION_DESIGNER"
   | "CREATIVE_DEVELOPMENT"
   | "CREATIVE_COLLABORATION"
-  | "GENERAL_SUPPORT";
+  | "GENERAL_SUPPORT"
+  | "LOOP_GUARD_TRIPPED";
 
 export type MessageSender = "user" | "assistant";
 
