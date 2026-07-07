@@ -1,4 +1,8 @@
-import { ASSISTANT_DEFAULT_MESSAGE } from "../config/assistant";
+import {
+  ASSISTANT_DEFAULT_MESSAGE,
+  LOOP_GUARD_WINDOW_MS,
+  LOOP_GUARD_MAX_REPLIES,
+} from "../config/assistant";
 import InstagramConversation, {
   IInstagramConversation,
 } from "../models/instagramConversation";
@@ -518,6 +522,20 @@ const processIncomingMessage = async (
   log("incoming.done", { senderId });
 };
 
+// ─── Loop guard: count our recent replies ───────────────────────────
+// Number of assistant messages we've sent within the last
+// LOOP_GUARD_WINDOW_MS. Messages without a createdAt (shouldn't happen for
+// persisted docs) are ignored.
+export const countRecentAssistantReplies = (
+  conversation: IInstagramConversation
+): number => {
+  const cutoff = Date.now() - LOOP_GUARD_WINDOW_MS;
+  return conversation.messages.reduce((n, m) => {
+    if (m.sender !== "assistant" || !m.createdAt) return n;
+    return new Date(m.createdAt).getTime() >= cutoff ? n + 1 : n;
+  }, 0);
+};
+
 // ─── AI pipeline (mirrors chatbot conversation.sendMessage) ─────────
 
 const processAIResponse = async (
@@ -561,6 +579,25 @@ const processAIResponse = async (
   if (contactData.phone) {
     conversation.capturedData.phone = contactData.phone;
     conversation.tags = addUniqueTags(conversation.tags, ["PHONE_RECEIVED"]);
+  }
+
+  // ── Loop / velocity guard ──
+  // Circuit breaker: if we've already sent too many replies in the recent
+  // window, this conversation is looping (e.g. another AI account ping-ponging
+  // with ours) or being flooded. Stop replying — the incoming message and any
+  // contact data are still persisted above. Going silent breaks the loop; the
+  // window clears once we've been quiet, so a real user is answered later.
+  if (countRecentAssistantReplies(conversation) >= LOOP_GUARD_MAX_REPLIES) {
+    log("ai.loop-guard.tripped", {
+      senderId,
+      currentFlow: conversation.currentFlow,
+      windowMs: LOOP_GUARD_WINDOW_MS,
+      maxReplies: LOOP_GUARD_MAX_REPLIES,
+      note: "too many replies in window — going silent, no reply sent",
+    });
+    conversation.tags = addUniqueTags(conversation.tags, ["LOOP_GUARD_TRIPPED"]);
+    await conversation.save();
+    return;
   }
 
   // ── Completed conversation ──
